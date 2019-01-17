@@ -48,8 +48,7 @@ class Executor(invoke.Executor):
         return dicts
 
     def expand_calls(self, calls, apply_hosts=True):
-        # Generate new call list with per-host variants & Connections inserted
-        ret = []
+        # Generate new call generator with per-host variants & Connections inserted
         cli_hosts = []
         host_str = self.core[0].args.hosts.value
         if apply_hosts and host_str:
@@ -63,7 +62,8 @@ class Executor(invoke.Executor):
             # 'honor that new feature of Invoke')
             # TODO: roles, other non-runtime host parameterizations, etc
             # Pre-tasks get added only once, not once per host.
-            ret.extend(self.expand_calls(call.pre, apply_hosts=False))
+            for precall in self.expand_calls(call.pre, apply_hosts=False):
+                yield precall
             # Determine final desired host list based on CLI and task values
             # (with CLI, being closer to runtime, winning) and normalize to
             # Connection-init kwargs.
@@ -71,13 +71,14 @@ class Executor(invoke.Executor):
             cxn_params = self.normalize_hosts(cli_hosts or call_hosts)
             # Main task, per host/connection
             for init_kwargs in cxn_params:
-                ret.append(self.parameterize(call, init_kwargs))
+                yield self.parameterize(call, init_kwargs)
             # Deal with lack of hosts list (acts same as `inv` in that case)
             # TODO: no tests for this branch?
             if not cxn_params:
-                ret.append(call)
+                yield call
             # Post-tasks added once, not once per host.
-            ret.extend(self.expand_calls(call.post, apply_hosts=False))
+            for postcall in self.expand_calls(call.post, apply_hosts=False):
+                yield postcall
         # Add remainder as anonymous task
         if self.core.remainder:
             # TODO: this will need to change once there are more options for
@@ -98,8 +99,7 @@ class Executor(invoke.Executor):
             # TODO: will likely need to refactor that logic some more so it can
             # be used both there and here.
             for init_kwargs in self.normalize_hosts(cli_hosts):
-                ret.append(self.parameterize(anon, init_kwargs))
-        return ret
+                yield self.parameterize(anon, init_kwargs)
 
     def parameterize(self, call, connection_init_kwargs):
         """
